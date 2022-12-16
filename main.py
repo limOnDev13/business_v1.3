@@ -884,8 +884,8 @@ class CWSD():
     costCWSD = 0
     masses = 0
     feedPrice = 0
-    depreciationReservePercent = 0
-    expansionReservePercent = 0
+    depreciationReservePercent = 0.0
+    expansionReservePercent = 0.0
     depreciationReserve = 0
     expansionReserve = 0
     principalDebt = 0
@@ -908,7 +908,7 @@ class CWSD():
     def __init__(self, masses, amountModules=2, amountPools=4, square=10,
                  correctionFactor=2,feedPrice=260, salary=30000,
                  amountWorkers=2, equipmentCapacity=5.5, costElectricity=3.17, rent=70000,
-                 costCWSD=0, depreciationReservePercent=10, expansionReservePercent=10,
+                 costCWSD=0, depreciationReservePercent=10.0, expansionReservePercent=10.0,
                  principalDebt=450000, annualPercentage=15, amountMonth=12, grant=4500000):
         self.amountModules = amountModules
         self.feedPrice = feedPrice
@@ -995,7 +995,7 @@ class CWSD():
                 result += array[i][1]
         return result
 
-    def calculate_result_business_plan(self, startDate, endDate):
+    def calculate_result_business_plan(self, startDate, endDate, limitSalary):
         startMonth = startDate
         endMonth = calculate_end_date_of_month(startMonth)
         currentBudget = self.principalDebt + self.grant - self.costCWSD
@@ -1055,6 +1055,8 @@ class CWSD():
             startMonth = endMonth
             endMonth = calculate_end_date_of_month(startMonth)
 
+        self.calculate_family_profit(limitSalary)
+
         return self.resultBusinessPlan[len(self.resultBusinessPlan) - 1][8]
 
     def find_minimal_budget(self):
@@ -1093,10 +1095,12 @@ class CWSD():
             print('На аренду: ', item[5])
             print('На электричество: ', item[6])
             print('Выплаты за кредит: ', item[11])
-            print('Общие расходы: ', item[2] + item[3] + item[4] + item[5] + item[6] + item[11])
-            print('Выручка составит: ', item[7])
+            if (i != len(self.resultBusinessPlan) - 1):
+                print('Зарплата семье: ', item[13])
+            print('Общие расходы: ', item[12])
             print('Резерв на амортизацию оборудования составляет: ', item[9])
             print('Резерв на расширение производства составляет: ', item[10])
+            print('Выручка составит: ', item[7])
             print('Бюджет на конец текущего месяца месяца составит: ', item[8])
             print()
             startMonth = item[0]
@@ -1107,6 +1111,50 @@ class CWSD():
         annuityRatio /= (1 + monthlyPercentage) ** self.amountMonth - 1
         monthlyPayment = self.principalDebt * annuityRatio
         return monthlyPayment
+
+    def calculate_family_profit(self, limitSalary):
+        for i in range(len(self.resultBusinessPlan) - 1):
+            currentBusinessInfo = self.resultBusinessPlan[i]
+            nextBusinessInfo = self.resultBusinessPlan[i + 1]
+            delta = currentBusinessInfo[7] - nextBusinessInfo[12]
+            # item = [конец этого месяца, предыдущий бюджет, траты на мальков,
+            #         на корм, на зарплату, на аренду, на электричество, выручка, текущий бюджет,
+            #         резерв на амортизацию, резерв на расширение, месячная плата за кредит, общие расходы]
+            ourSalary = 0
+            if (currentBusinessInfo[8] > 0):
+                if (delta > 2 * limitSalary):
+                    ourSalary = 2 * limitSalary
+                elif (0 < delta <= 2 * limitSalary):
+                    ourSalary = delta / 2
+                else:
+                    ourSalary = 0
+            self.resultBusinessPlan[i][8] -= ourSalary
+            self.resultBusinessPlan[i][12] += ourSalary
+            self.resultBusinessPlan[i].append(ourSalary)
+
+
+class Business():
+    cwsds = list()
+    amountCWSDs = 0
+    startMasses = list()
+    totalBudget = 0
+
+    def __init__(self, startMasses):
+        self.cwsds = list()
+        self.startMasses = startMasses
+        amountCWSDs = 1
+
+        newCWSD = CWSD(startMasses, 2, 4, 10, 2, 260, 40000, 2, 5.5, 3.17,
+                       100000, 3000000, 7.5, 7.5, 500000, 15, 36, 5000000)
+        self.cwsds.append(newCWSD)
+
+        self.totalBudget = 0
+
+    def addNewCWSD(self):
+        newCWSD = CWSD(self.startMasses, 2, 4, 10, 2, 260, 40000, 2, 5.5, 3.17,
+                       100000, 3000000, 7.5, 7.5, 500000, 15, 36, 5000000)
+        self.cwsds.append(newCWSD)
+
 
 
 '''
@@ -1147,9 +1195,9 @@ print()
 '''
 masses = [100, 50, 30, 20]
 
-cwsd = CWSD(masses, 2, 4, 10, 2, 260, 40000, 2, 5.5, 3.17, 70000, 3000000, 7.5, 7.5, 500000, 15, 36, 5000000)
+cwsd = CWSD(masses, 2, 4, 10, 2, 260, 40000, 2, 5.5, 3.17, 100000, 3000000, 7.5, 7.5, 500000, 15, 36, 5000000)
 cwsd.work_cwsd_with_print(date.date.today(), date.date(2028, 1, 1), 50, 50)
-cwsd.calculate_result_business_plan(date.date.today(), date.date(2028, 1, 1))
+cwsd.calculate_result_business_plan(date.date.today(), date.date(2028, 1, 1), 100000)
 cwsd.print_info(date.date.today())
 print(cwsd.find_minimal_budget())
 
