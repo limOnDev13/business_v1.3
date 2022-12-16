@@ -352,6 +352,7 @@ class Pool():
         if ((amountFishForSale >= self.singleVolumeFish) or
                 ((amountFishForSale == self.arrayFishes.get_amount_fishes()) and
                  (self.arrayFishes.get_amount_fishes() != 0))):
+            previousBiomass = self.arrayFishes.get_biomass()
             soldFish = self.arrayFishes.remove_biomass(amountFishForSale)
             # продаем выросшую рыбу и сохраняем об этом инфу
             soldBiomass = 0
@@ -365,7 +366,10 @@ class Pool():
             self.arraySoldFish.append([day, amountSoldFish, soldBiomass, revenue])
             # обновим density
             self.currentDensity = self.arrayFishes.get_biomass() / self.square
-            print(day, ' продано: ', soldBiomass, ' выручка: ', revenue)
+            '''
+            print(day, ' indexFry = ', self.indexFry, ' было ', previousBiomass, ' продано: ', soldBiomass,
+                  ' стало ', self.arrayFishes.get_biomass(), ' выручка: ', revenue)
+            '''
 
     def update_density(self):
         self.currentDensity = self.arrayFishes.get_biomass() / self.square
@@ -407,7 +411,7 @@ class Opimization():
 
         return [amountFish, amountGrowthDays, amountDaysBeforeLimit]
 
-    def calculate_max_average_mass(self, square, maxDensity, amountDays, startMass, step, amountFish, feedRatio, ):
+    def calculate_max_average_mass(self, square, maxDensity, amountDays, startMass, step, amountFish, feedRatio):
         # подготовим переменные для использования ctypes
         calculateLib = self._dllArrayFish.calculate_density_after_some_days
 
@@ -457,6 +461,26 @@ class Opimization():
             print([delta, x])
             encounter += 1
         return [result, max]
+
+    def calculate_optimal_credit(self, masses, startCredit, step, endCredit, startDate, endDate):
+        credit = startCredit
+        min = 0
+        result = credit
+        encounter = 1
+        while (credit <= endCredit):
+            cwsd = CWSD(masses, 2, 4, 10, 2, 260, 40000, 2, 5.5, 3.17, 70000, 3000000,
+                        7.5, 7.5, credit, 15, 12, 9 * credit)
+            cwsd.work_cwsd(startDate, endDate, 50, 50)
+            cwsd.calculate_result_business_plan(startDate, endDate)
+            x = cwsd.find_minimal_budget()
+            if ((x > 0) and (x > min)):
+                min = x
+                result = credit
+            draw_line(startCredit, endCredit, step, encounter)
+            print([credit, x])
+            encounter += 1
+            credit += step
+        return [result, min]
 
 
 class Module():
@@ -864,6 +888,10 @@ class CWSD():
     expansionReservePercent = 0
     depreciationReserve = 0
     expansionReserve = 0
+    principalDebt = 0
+    annualPercentage = 0
+    amountMonth = 0
+    grant = 0
 
     feedings = list()
     fries = list()
@@ -873,11 +901,15 @@ class CWSD():
     revenues = list()
     resultBusinessPlan = list()
 
+    monthlyPayment = 0
 
 
-    def __init__(self, masses, amountModules=2, amountPools=4, square=10, correctionFactor=2,feedPrice=260, salary=30000,
+
+    def __init__(self, masses, amountModules=2, amountPools=4, square=10,
+                 correctionFactor=2,feedPrice=260, salary=30000,
                  amountWorkers=2, equipmentCapacity=5.5, costElectricity=3.17, rent=70000,
-                 costCWSD=0, depreciationReservePercent=10, expansionReservePercent=10):
+                 costCWSD=0, depreciationReservePercent=10, expansionReservePercent=10,
+                 principalDebt=450000, annualPercentage=15, amountMonth=12, grant=4500000):
         self.amountModules = amountModules
         self.feedPrice = feedPrice
         self.modules = list()
@@ -897,6 +929,10 @@ class CWSD():
         self.expansionReservePercent = expansionReservePercent
         self.depreciationReserve = 0
         self.expansionReserve = 0
+        self.principalDebt = principalDebt
+        self.annualPercentage = annualPercentage
+        self.amountMonth = amountMonth
+        self.grant = grant
 
         self.feedings = list()
         self.fries = list()
@@ -923,15 +959,15 @@ class CWSD():
                                           self.modules[i].pools[j].arraySoldFish[k][3]])
 
         startMonth = startDate
-        endMonth = calculate_end_date_of_month(startMonth)
+        endMonth = calculate_end_date_of_month(startMonth) - date.timedelta(1)
         while (endMonth <= endDate):
             self.rents.append([endMonth, self.rent])
             self.salaries.append([endMonth, self.amountWorkers * self.salary])
             amountDaysInThisMonth = (endMonth - startMonth).days
             self.electricities.append([endMonth,
                                       amountDaysInThisMonth * 24 * self.equipmentCapacity * self.costElectricity])
-            startMonth = endMonth
-            endMonth = calculate_end_date_of_month(startMonth)
+            startMonth = endMonth + date.timedelta(1)
+            endMonth = calculate_end_date_of_month(startMonth) - date.timedelta(1)
 
     def work_cwsd(self, startDate, endDate, reserve, deltaMass):
         for i in range(self.amountModules):
@@ -962,9 +998,10 @@ class CWSD():
     def calculate_result_business_plan(self, startDate, endDate):
         startMonth = startDate
         endMonth = calculate_end_date_of_month(startMonth)
-        currentBudget = -self.costCWSD
-        currentDepreciationReserve = 0
-        currentExpansionReserve = 0
+        currentBudget = self.principalDebt + self.grant - self.costCWSD
+        self.monthlyPayment = self.calculate_monthly_loan_payment()
+        currentMonth = 1
+
         while(endMonth <= endDate):
             item = [endMonth, currentBudget]
             bioCost_fries = self._find_events_in_this_period(self.fries, startMonth, endMonth)
@@ -983,6 +1020,13 @@ class CWSD():
             currentBudget += revenue - bioCost_fries - bioCost_feedings - techCost_salaries\
                              - techCost_rents - techCost_electricities
 
+            if (currentMonth <= self.amountMonth):
+                currentBudget -= self.monthlyPayment
+                currentMonth += 1
+            else:
+                self.monthlyPayment = 0
+
+
             if ((startDate.day == endMonth.day) and
                     (startDate.month == endMonth.month) and
                     (startDate.year != endMonth.year) and
@@ -991,14 +1035,22 @@ class CWSD():
                 self.depreciationReserve += currentDepreciationReserve
                 currentExpansionReserve = currentBudget * self.expansionReservePercent / 100
                 self.expansionReserve += currentExpansionReserve
+            else:
+                currentDepreciationReserve = 0
+                currentExpansionReserve = 0
 
             item.append(currentBudget)
             item.append(self.depreciationReserve)
             item.append(self.expansionReserve)
+            item.append(self.monthlyPayment)
+            item.append(currentDepreciationReserve + currentExpansionReserve + self.monthlyPayment +
+                        techCost_electricities + techCost_rents + techCost_salaries + bioCost_feedings +
+                        bioCost_fries
+                        )
 
             # item = [конец этого месяца, предыдущий бюджет, траты на мальков,
             #         на корм, на зарплату, на аренду, на электричество, выручка, текущий бюджет,
-            #         резерв на амортизацию, резерв на расширение]
+            #         резерв на амортизацию, резерв на расширение, месячная плата за кредит, общие расходы]
             self.resultBusinessPlan.append(item)
             startMonth = endMonth
             endMonth = calculate_end_date_of_month(startMonth)
@@ -1013,7 +1065,7 @@ class CWSD():
         for i in range(len(self.resultBusinessPlan)):
             if (result > self.resultBusinessPlan[i][8]):
                 result = self.resultBusinessPlan[i][8]
-        return result * (-1)
+        return result
 
     def print_info(self, startDate):
         startMonth = startDate
@@ -1040,12 +1092,21 @@ class CWSD():
             print('На зарплату: ', item[4])
             print('На аренду: ', item[5])
             print('На электричество: ', item[6])
+            print('Выплаты за кредит: ', item[11])
+            print('Общие расходы: ', item[2] + item[3] + item[4] + item[5] + item[6] + item[11])
             print('Выручка составит: ', item[7])
             print('Резерв на амортизацию оборудования составляет: ', item[9])
             print('Резерв на расширение производства составляет: ', item[10])
             print('Бюджет на конец текущего месяца месяца составит: ', item[8])
             print()
             startMonth = item[0]
+
+    def calculate_monthly_loan_payment(self):
+        monthlyPercentage = self.annualPercentage / 12 / 100
+        annuityRatio = monthlyPercentage * (1 + monthlyPercentage) ** self.amountMonth
+        annuityRatio /= (1 + monthlyPercentage) ** self.amountMonth - 1
+        monthlyPayment = self.principalDebt * annuityRatio
+        return monthlyPayment
 
 
 '''
@@ -1085,7 +1146,10 @@ print()
 print()
 '''
 masses = [100, 50, 30, 20]
-cwsd = CWSD(masses, 2, 4, 10, 2, 260, 40000, 2, 5.5, 3.17, 70000, 3000000, 7.5, 7.5)
+
+cwsd = CWSD(masses, 2, 4, 10, 2, 260, 40000, 2, 5.5, 3.17, 70000, 3000000, 7.5, 7.5, 500000, 15, 36, 5000000)
 cwsd.work_cwsd_with_print(date.date.today(), date.date(2028, 1, 1), 50, 50)
 cwsd.calculate_result_business_plan(date.date.today(), date.date(2028, 1, 1))
 cwsd.print_info(date.date.today())
+print(cwsd.find_minimal_budget())
+
